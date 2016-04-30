@@ -32,11 +32,11 @@ BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
-ROMFS	:=	romfs
+ROMFS       :=	romfs
 
-APP_TITLE       := ironhax installer
-APP_DESCRIPTION := Use this to install ironhax to your system. Requires    IronFall and an internet connection.
-APP_AUTHOR      := smea and yellows8
+APP_TITLE       :=  supermysterychunkhax installer
+APP_DESCRIPTION :=  Requires Pokemon SMD and an Internet connection.
+APP_AUTHOR      :=  SALT
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -127,19 +127,23 @@ ifneq ($(ROMFS),)
 	export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
 endif
 
-.PHONY: $(BUILD) clean all
+.PHONY: $(BUILD) clean meta all
 
 #---------------------------------------------------------------------------------
 all: $(BUILD)
 
-$(BUILD):
+$(BUILD): meta
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #---------------------------------------------------------------------------------
+meta:
+	@smdhtool --create "(v*)hax installer" "Requires VVVVVV and an Internet connection." SALT vhax_installer.png vhax_installer.smdh
+
+#---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf
+	@rm -fr $(BUILD) *.3dsx *.smdh *.elf
 
 
 #---------------------------------------------------------------------------------

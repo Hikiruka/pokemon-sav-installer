@@ -65,7 +65,7 @@ char *Memory(int length, int size) {
 
 /*----------------------------------------------------------------------------*/
 unsigned char *BLZ_Code(unsigned char *raw_buffer, int raw_len, unsigned int *new_len, int best) {
-  unsigned char *pak_buffer, *pak, *raw, *raw_end, *flg, *tmp;
+  unsigned char *pak_buffer, *pak, *raw, *raw_end, *flg = NULL, *tmp;
   unsigned int   pak_len, inc_len, hdr_len, enc_len, len, pos, max;
   unsigned int   len_best, pos_best, len_next, pos_next, len_post, pos_post;
   unsigned int   pak_tmp, raw_tmp;
@@ -117,8 +117,10 @@ unsigned char *BLZ_Code(unsigned char *raw_buffer, int raw_len, unsigned int *ne
         if (raw + len_best < raw_end) {
           raw += len_best;
           SEARCH(len_next, pos_next);
+          (void) pos_next;
           raw -= len_best - 1;
           SEARCH(len_post, pos_post);
+          (void) pos_post;
           raw--;
 
           if (len_next <= BLZ_THRESHOLD) len_next = 1;
