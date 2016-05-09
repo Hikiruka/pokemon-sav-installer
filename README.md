@@ -9,5 +9,6 @@ Fork of [sploit_installer](https://github.com/smealum/sploit_installer) by smea 
 
 * supermysterychunkhax, for Pokemon Super Mystery Dungeon
 * (v*)hax, for VVVVVV
+* humblehax, for Citizens of Earth
 
 See the [homebrew launcher page](https://smealum.github.io/3ds) and [Homebrew Exploits on 3dbrew](https://3dbrew.org/wiki/Homebrew_Exploits) for a general summary of currently accessible exploits.

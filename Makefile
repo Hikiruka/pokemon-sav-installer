@@ -139,6 +139,7 @@ $(BUILD): meta
 #---------------------------------------------------------------------------------
 meta:
 	@smdhtool --create "(v*)hax installer" "Requires VVVVVV and an Internet connection." SALT vhax_installer.png vhax_installer.smdh
+	@smdhtool --create "humblehax installer" "Requires Citizens of Earth and an Internet connection." SALT humblehax_installer.png humblehax_installer.smdh
 
 #---------------------------------------------------------------------------------
 clean:

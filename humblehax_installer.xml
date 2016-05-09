@@ -1,0 +1,8 @@
+<shortcut>
+	<executable>/3ds/salt_sploit_installer/salt_sploit_installer.3dsx</executable>
+	<icon>/3ds/humblehax_installer.smdh</icon>
+</shortcut>
+<targets selectable="false">
+	<title mediatype="1">000400000012C100</title>
+	<title mediatype="1">0004000000136E00</title>
+</targets>
