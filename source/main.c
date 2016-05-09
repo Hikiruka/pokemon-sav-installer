@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include <3ds.h>
 
@@ -37,6 +38,12 @@ typedef enum
 } state_t;
 
 char status[256];
+
+struct {
+    bool enabled;
+    size_t offset;
+    char path[256];
+} payload_embed;
 
 Result get_redirect(char *url, char *out, size_t out_size, char *user_agent)
 {
@@ -97,11 +104,78 @@ Result download_file(httpcContext *context, void** buffer, size_t* size)
     return 0;
 }
 
+Result read_savedata(const char* path, void** data, size_t* size)
+{
+    if(!path || !data || !size) return -1;
+
+    Result ret = -1;
+    int fail = 0;
+    void* buffer = NULL;
+
+    fsUseSession(save_session, false);
+    ret = FSUSER_OpenArchive(&save_archive);
+    if(R_FAILED(ret))
+    {
+        fail = -1;
+        goto readFail;
+    }
+
+    Handle file = 0;
+    ret = FSUSER_OpenFile(&file, save_archive, fsMakePath(PATH_ASCII, path), FS_OPEN_READ, 0);
+    if(R_FAILED(ret))
+    {
+        fail = -2;
+        goto readFail;
+    }
+
+    u64 file_size = 0;
+    ret = FSFILE_GetSize(file, &file_size);
+
+    buffer = malloc(file_size);
+    if(!buffer)
+    {
+        fail = -3;
+        goto readFail;
+    }
+
+    u32 bytes_read = 0;
+    ret = FSFILE_Read(file, &bytes_read, 0, buffer, file_size);
+    if(R_FAILED(ret))
+    {
+        fail = -4;
+        goto readFail;
+    }
+
+    ret = FSFILE_Close(file);
+    if(R_FAILED(ret))
+    {
+        fail = -5;
+        goto readFail;
+    }
+
+readFail:
+    FSUSER_CloseArchive(&save_archive);
+    fsEndUseSession();
+    if(fail)
+    {
+        sprintf(status, "Failed to read file: %d\n     %08lX %08lX", fail, ret, bytes_read);
+        if(buffer) free(buffer);
+    }
+    else
+    {
+        sprintf(status, "Successfully read file.\n     %08lX               ", bytes_read);
+        *data = buffer;
+        *size = bytes_read;
+    }
+
+    return ret;
+}
+
 Result write_savedata(const char* path, const void* data, size_t size)
 {
     if(!path || !data || size == 0) return -1;
 
-    Result ret;
+    Result ret = -1;
     int fail = 0;
 
     fsUseSession(save_session, false);
@@ -140,7 +214,7 @@ Result write_savedata(const char* path, const void* data, size_t size)
     }
 
     ret = FSUSER_ControlArchive(save_archive, ARCHIVE_ACTION_COMMIT_SAVE_DATA, NULL, 0, NULL, 0);
-    if(R_FAILED(ret)) fail = -4;
+    if(R_FAILED(ret)) fail = -5;
 
 writeFail:
     FSUSER_CloseArchive(&save_archive);
@@ -369,18 +443,43 @@ Result convert_filepath(char *inpath, char *outpath, u32 outpath_maxsize, int se
             strptr = strtok(NULL, "@");
             continue;
         }
-		
-        if(convstr[1] != 'd') return 9;
-        if(convstr[2] < '0' || convstr[2] > '9') return 9;
 
-        memset(tmpstr, 0, sizeof(tmpstr));
-        memset(tmpstr2, 0, sizeof(tmpstr2));
-        snprintf(tmpstr, sizeof(tmpstr) - 1, "%s%c%c", "%0", convstr[2], convstr[1]);
-        snprintf(tmpstr2, sizeof(tmpstr2) - 1, tmpstr, selected_slot);
+        switch(convstr[1])
+        {
+            case 'd':
+            {
+                if(convstr[2] < '0' || convstr[2] > '9') return 9;
 
-        strncat(outpath, tmpstr2, outpath_maxsize - 1);
+                memset(tmpstr, 0, sizeof(tmpstr));
+                memset(tmpstr2, 0, sizeof(tmpstr2));
+                snprintf(tmpstr, sizeof(tmpstr) - 1, "%s%c%c", "%0", convstr[2], convstr[1]);
+                snprintf(tmpstr2, sizeof(tmpstr2) - 1, tmpstr, selected_slot);
 
-        strptr = strtok(&convstr[3], "@");
+                strncat(outpath, tmpstr2, outpath_maxsize - 1);
+
+                strptr = strtok(&convstr[3], "@");
+                break;
+            }
+
+            case 'p':
+            {
+                char tmpstr3[9];
+                for(int i = 0; i < 8; i++)
+                {
+                    tmpstr3[i] = convstr[i + 2];
+                    if(!isxdigit(tmpstr3[i])) return 9;
+                }
+
+                payload_embed.offset = strtol(tmpstr3, NULL, 16);
+                payload_embed.enabled = true;
+
+                strptr = strtok(&convstr[10], "@");
+                strncpy(payload_embed.path, outpath, sizeof(payload_embed.path) - 1);
+                break;
+            }
+
+            default: return 9;
+        }
     }
 
     return 0;
@@ -832,8 +931,8 @@ int main()
                     snprintf(in_url, sizeof(in_url) - 1, "http://smea.mtheall.com/get_payload.php?version=%s-%d-%d-%d-%d-%s",
                         firmware_version[0] ? "NEW" : "OLD", firmware_version[1], firmware_version[2], firmware_version[3], firmware_version[4], regions[firmware_version[5]]);
 
-					char user_agent[64];
-					snprintf(user_agent, sizeof(user_agent) - 1, "salt_sploit_installer-%s", exploitname);
+                    char user_agent[64];
+                    snprintf(user_agent, sizeof(user_agent) - 1, "salt_sploit_installer-%s", exploitname);
                     Result ret = get_redirect(in_url, out_url, 512, user_agent);
                     if(R_FAILED(ret))
                     {
@@ -907,7 +1006,35 @@ int main()
                 }
 
                 {
-                    Result ret = write_savedata("/payload.bin", payload_buffer, payload_size);
+                    Result ret;
+
+                    if(payload_embed.enabled)
+                    {
+                        void* buffer = NULL;
+                        size_t size = 0;
+                        ret = read_savedata(payload_embed.path, &buffer, &size);
+                        if(ret)
+                        {
+                            sprintf(status, "Failed to embed payload\n    Error code: %08lX", ret);
+                            next_state = STATE_ERROR;
+                            break;
+                        }
+                        if((payload_embed.offset + payload_size + sizeof(u32)) >= size)
+                        {
+                            sprintf(status, "Failed to embed payload (too large)\n    0x%X >= 0x%X", (payload_embed.offset + payload_size + sizeof(u32)), size);
+                            next_state = STATE_ERROR;
+                            break;
+                        }
+
+                        *(u32*)(buffer + payload_embed.offset) = payload_size;
+                        memcpy(buffer + payload_embed.offset + sizeof(u32), payload_buffer, payload_size);
+                        ret = write_savedata(payload_embed.path, buffer, size);
+
+                        free(buffer);
+                    }
+                    else
+                        ret = write_savedata("/payload.bin", payload_buffer, payload_size);
+
                     if(ret)
                     {
                         sprintf(status, "Failed to install payload\n    Error code: %08lX", ret);
@@ -931,6 +1058,8 @@ int main()
 
         gspWaitForVBlank();
     }
+
+    if(payload_buffer) free(payload_buffer);
 
     romfsExit();
     httpcExit();
