@@ -65,12 +65,15 @@ Result get_redirect(char *url, char *out, size_t out_size, char *user_agent)
     ret = httpcGetResponseHeader(&context, "Location", out, out_size);
     httpcCloseContext(&context);
 
-    return 0;
+    return ret;
 }
 
-Result download_file(httpcContext *context, void** buffer, size_t* size)
+Result download_file(httpcContext *context, void** buffer, size_t* size, char* user_agent)
 {
     Result ret;
+
+    ret = httpcAddRequestHeaderField(context, "User-Agent", user_agent);
+    if(R_FAILED(ret)) return ret;
 
     ret = httpcBeginRequest(context);
     if(R_FAILED(ret)) return ret;
@@ -112,8 +115,8 @@ Result read_savedata(const char* path, void** data, size_t* size)
     int fail = 0;
     void* buffer = NULL;
 
-    fsUseSession(save_session, false);
-    ret = FSUSER_OpenArchive(&save_archive);
+    fsUseSession(save_session);
+    ret = FSUSER_OpenArchive(&save_archive, ARCHIVE_SAVEDATA, (FS_Path){PATH_EMPTY, 1, (u8*)""});
     if(R_FAILED(ret))
     {
         fail = -1;
@@ -154,7 +157,7 @@ Result read_savedata(const char* path, void** data, size_t* size)
     }
 
 readFail:
-    FSUSER_CloseArchive(&save_archive);
+    FSUSER_CloseArchive(save_archive);
     fsEndUseSession();
     if(fail)
     {
@@ -178,8 +181,8 @@ Result write_savedata(const char* path, const void* data, size_t size)
     Result ret = -1;
     int fail = 0;
 
-    fsUseSession(save_session, false);
-    ret = FSUSER_OpenArchive(&save_archive);
+    fsUseSession(save_session);
+    ret = FSUSER_OpenArchive(&save_archive, ARCHIVE_SAVEDATA, (FS_Path){PATH_EMPTY, 1, (u8*)""});
     if(R_FAILED(ret))
     {
         fail = -1;
@@ -217,7 +220,7 @@ Result write_savedata(const char* path, const void* data, size_t size)
     if(R_FAILED(ret)) fail = -5;
 
 writeFail:
-    FSUSER_CloseArchive(&save_archive);
+    FSUSER_CloseArchive(save_archive);
     fsEndUseSession();
     if(fail) sprintf(status, "Failed to write to file: %d\n     %08lX %08lX", fail, ret, bytes_written);
     else sprintf(status, "Successfully wrote to file!\n     %08lX               ", bytes_written);
@@ -701,7 +704,6 @@ int main()
         {
             case STATE_INITIALIZE:
                 {
-                    save_archive = (FS_Archive){ARCHIVE_SAVEDATA, (FS_Path){PATH_EMPTY, 1, (u8*)""}};
                     fsInit();
 
                     // get an fs:USER session as the game
@@ -750,7 +752,7 @@ int main()
 
                     cfguExit();
 
-                    u8 is_new3ds = 0;
+                    bool is_new3ds = false;
                     APT_CheckNew3DS(&is_new3ds);
 
                     firmware_version[0] = is_new3ds;
@@ -779,10 +781,7 @@ int main()
                         break;
                     }
 
-                    aptOpenSession();
                     ret = APT_GetProgramID(&program_id);
-                    aptCloseSession();
-
                     if(R_FAILED(ret))
                     {
                         snprintf(status, sizeof(status) - 1, "Failed to get the program ID for the current process.\n    Error code: %08lX", ret);
@@ -949,7 +948,7 @@ int main()
                         break;
                     }
 
-                    ret = download_file(&context, &payload_buffer, &payload_size);
+                    ret = download_file(&context, &payload_buffer, &payload_size, user_agent);
                     if(R_FAILED(ret))
                     {
                         sprintf(status, "Failed to download payload\n    Error code: %08lX", ret);
@@ -971,8 +970,8 @@ int main()
                 {
                     if(flags_bitmask & 0x8)
                     {
-                        fsUseSession(save_session, false);
-                        Result ret = FSUSER_FormatSaveData(save_archive.id, save_archive.lowPath, 0x200, 10, 10, 11, 11, true);
+                        fsUseSession(save_session);
+                        Result ret = FSUSER_FormatSaveData(ARCHIVE_SAVEDATA, (FS_Path){PATH_EMPTY, 1, (u8*)""}, 0x200, 10, 10, 11, 11, true);
                         fsEndUseSession();
                         if(ret)
                         {
