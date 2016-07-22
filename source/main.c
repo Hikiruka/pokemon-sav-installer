@@ -28,6 +28,7 @@ typedef enum
     STATE_NONE,
     STATE_INITIALIZE,
     STATE_INITIAL,
+    STATE_SELECT_VERSION,
     STATE_SELECT_SLOT,
     STATE_SELECT_FIRMWARE,
     STATE_DOWNLOAD_PAYLOAD,
@@ -305,6 +306,81 @@ Result load_exploitlist_config(char *filepath, u64 *cur_programid, char *out_exp
         strncpy(out_exploitname, exploitname, 63);
         strncpy(out_titlename, titlename, 63);
     }
+
+    return ret;
+}
+
+Result load_exploitversion(char *exploitname, u64 *cur_programid, int index, u32* out_remaster, char* out_displayversion)
+{
+    int ret = 2;
+
+    int len;
+    char *strptr;
+    char *namestr = NULL, *valuestr = NULL;
+
+    char filepath[256] = {0};
+    char line[256] = {0};
+    snprintf(filepath, sizeof(filepath) - 1, "romfs:/%s/%016llx/config.ini", exploitname, *cur_programid);
+
+    int stage = 0;
+    int i = 0;
+
+    FILE* f = fopen(filepath, "r");
+    if(f == NULL) return 1;
+
+    while(fgets(line, sizeof(line) - 1, f))
+    {
+        remove_newline(line);
+
+        len = strlen(line);
+        if(len == 0) continue;
+
+        if(stage == 0)
+        {
+            if(strcmp(line, "[remaster_versions]") == 0)
+            {
+                ret = 3;
+                stage = 1;
+            }
+        }
+        else if(stage == 1)
+        {
+            if(i != index)
+            {
+                i++;
+                continue;
+            }
+
+            strptr = strtok(line, "=");
+            if(strptr == NULL) continue;
+            namestr = strptr;
+
+            strptr = strtok(NULL, "=");
+            if(strptr == NULL) continue;
+            valuestr = strptr;
+
+            unsigned int tmpremaster = 0;
+            if(sscanf(namestr, "%04X", &tmpremaster) == 1)
+            {
+                ret = 4;
+
+                strptr = strtok(valuestr, "@");
+                if(strptr == NULL) break;
+
+                strptr = strtok(NULL, "@");
+                if(strptr == NULL) break;
+
+                if(out_displayversion) strncpy(out_displayversion, strptr, 63);
+                if(out_remaster) *out_remaster = tmpremaster;
+
+                ret = 0;
+
+                break;
+            }
+        }
+    }
+
+    fclose(f);
 
     return ret;
 }
@@ -624,6 +700,8 @@ int main()
     state_t current_state = STATE_NONE;
     state_t next_state = STATE_INITIALIZE;
 
+    FS_ProductInfo product_info;
+
     char exploitname[64] = {0};
     char titlename[64] = {0};
 
@@ -640,6 +718,12 @@ int main()
     int firmware_selected_value = 0;
 
     int selected_slot = 0;
+    int selected_version = 0;
+    u32 selected_remaster = 0;
+
+    AM_TitleEntry update_title;
+    bool update_exists = false;
+    int version_maxnum = 0;
 
     void* payload_buffer = NULL;
     size_t payload_size = 0;
@@ -662,8 +746,10 @@ int main()
                     strncat(top_text, "Initializing... You may press START at any time\nto return to menu.\n\n", sizeof(top_text) - 1);
                     break;
                 case STATE_INITIAL:
-                    strncat(top_text, "Welcome to sploit_installer: SALT edition!\nPlease proceed with caution, as you might lose\ndata if you don't.\n\n", sizeof(top_text) - 1);
-                    snprintf(top_text_tmp, sizeof(top_text_tmp) - 1, "Auto-detected %s version: %s\nPress A to continue.\n\n", titlename, displayversion);
+                    strncat(top_text, "Welcome to sploit_installer: SALT edition!\nPlease proceed with caution, as you might lose\ndata if you don't.\n\nPress A to continue.\n\n", sizeof(top_text) - 1);
+                    break;
+                case STATE_SELECT_VERSION:
+                    snprintf(top_text_tmp, sizeof(top_text_tmp) - 1, "Auto-detected %s version: %s\nD-Pad to select, A to continue.\n\n", titlename, displayversion);
                     break;
                 case STATE_SELECT_SLOT:
                     snprintf(top_text_tmp, sizeof(top_text_tmp) - 1, "Please select the savegame slot %s will be\ninstalled to. D-Pad to select, A to continue.\n", exploitname);
@@ -772,8 +858,8 @@ int main()
                         break;
                     }
 
-                    FS_ProductInfo product_info;
                     ret = FSUSER_GetProductInfo(&product_info, pid);
+                    selected_remaster = product_info.remasterVersion;
                     if(R_FAILED(ret))
                     {
                         snprintf(status, sizeof(status) - 1, "Failed to get the product info for the current process.\n    Error code: %08lX", ret);
@@ -788,9 +874,6 @@ int main()
                         next_state = STATE_ERROR;
                         break;
                     }
-
-                    bool update_exists = false;
-                    AM_TitleEntry update_title;
 
                     u64 update_program_id = 0;
                     if(((program_id >> 32) & 0xFFFF) == 0) update_program_id = program_id | 0x0000000E00000000ULL;
@@ -830,30 +913,31 @@ int main()
                         break;
                     }
 
-                    u32 selected_remaster_version = 0;
-                    ret = load_exploitconfig(exploitname, &program_id, product_info.remasterVersion, update_exists ? &update_title.version : NULL, &selected_remaster_version, versiondir, displayversion);
-                    if(ret)
+                    int version_index = 0;
+                    u32 this_remaster = 0;
+                    char this_displayversion[64] = {0};
+                    while(true)
                     {
-                        snprintf(status, sizeof(status) - 1, "Failed to find your version of\n%s in the config / config loading failed.\n    Error code: %08lX", titlename, ret);
-                        if(ret == 1) strncat(status, " Failed to\nopen the config file in romfs.", sizeof(status) - 1);
-                        if(ret == 2 || ret == 4) strncat(status, " The romfs config file is invalid.", sizeof(status) - 1);
-                        if(ret == 3)
+                        ret = load_exploitversion(exploitname, &program_id, version_index, &this_remaster, this_displayversion);
+                        if(ret) break;
+
+                        if(this_remaster == selected_remaster)
                         {
-                            snprintf(status, sizeof(status) - 1, "this update-title version (v%u) of %s is not compatible with %s, sorry\n", update_title.version, titlename, exploitname);
-                            next_state = STATE_ERROR;
-                            break;
-                        }
-                        if(ret == 5)
-                        {
-                            snprintf(status, sizeof(status) - 1, "this remaster version (%04lX) of %s is not compatible with %s, sorry\n", selected_remaster_version, titlename, exploitname);
-                            next_state = STATE_ERROR;
-                            break;
+                            strncpy(displayversion, this_displayversion, 63);
+                            selected_version = version_index;
                         }
 
+                        version_index++;
+                    }
+
+                    if(version_index == 0)
+                    {
+                        snprintf(status, sizeof(status) - 1, "Failed to read remaster versions from config.");
                         next_state = STATE_ERROR;
                         break;
                     }
 
+                    version_maxnum = version_index - 1;
                     next_state = STATE_INITIAL;
                 }
                 break;
@@ -862,9 +946,37 @@ int main()
                 {
                     if(hidKeysDown() & KEY_A)
                     {
+                        if(version_maxnum != 0) next_state = STATE_SELECT_VERSION;
+                        else if(flags_bitmask & 0x10) next_state = STATE_SELECT_FIRMWARE;
+                        else next_state = STATE_SELECT_SLOT;
+                    }
+                }
+                break;
+
+            case STATE_SELECT_VERSION:
+                {
+                    if(hidKeysDown() & KEY_UP) selected_version++;
+                    if(hidKeysDown() & KEY_DOWN) selected_version--;
+                    if(hidKeysDown() & KEY_A)
+                    {
                         if(flags_bitmask & 0x10) next_state = STATE_SELECT_FIRMWARE;
                         else next_state = STATE_SELECT_SLOT;
                     }
+
+                    if(selected_version < 0) selected_version = 0;
+                    if(selected_version > version_maxnum) selected_version = version_maxnum;
+
+                    Result ret = load_exploitversion(exploitname, &program_id, selected_version, &selected_remaster, displayversion);
+                    if(ret)
+                    {
+                        snprintf(status, sizeof(status) - 1, "Failed to read remaster version from config.");
+                        next_state = STATE_ERROR;
+                        break;
+                    }
+
+                    printf((selected_version >= version_maxnum) ? "                       \n" : "                      ^\n");
+                    printf("      Selected version: %s  \n", displayversion);
+                    printf((!selected_version) ? "                       \n" : "                      v\n");
                 }
                 break;
 
@@ -968,6 +1080,30 @@ int main()
 
             case STATE_INSTALL_PAYLOAD:
                 {
+                    u32 selected_remaster_version = 0;
+                    Result ret = load_exploitconfig(exploitname, &program_id, selected_remaster, update_exists ? &update_title.version : NULL, &selected_remaster_version, versiondir, displayversion);
+                    if(ret)
+                    {
+                        snprintf(status, sizeof(status) - 1, "Failed to find your version of\n%s in the config / config loading failed.\n    Error code: %08lX", titlename, ret);
+                        if(ret == 1) strncat(status, " Failed to\nopen the config file in romfs.", sizeof(status) - 1);
+                        if(ret == 2 || ret == 4) strncat(status, " The romfs config file is invalid.", sizeof(status) - 1);
+                        if(ret == 3)
+                        {
+                            snprintf(status, sizeof(status) - 1, "this update-title version (v%u) of %s is not compatible with %s, sorry\n", update_title.version, titlename, exploitname);
+                            next_state = STATE_ERROR;
+                            break;
+                        }
+                        if(ret == 5)
+                        {
+                            snprintf(status, sizeof(status) - 1, "this remaster version (%04lX) of %s is not compatible with %s, sorry\n", selected_remaster_version, titlename, exploitname);
+                            next_state = STATE_ERROR;
+                            break;
+                        }
+
+                        next_state = STATE_ERROR;
+                        break;
+                    }
+
                     if(flags_bitmask & 0x8)
                     {
                         fsUseSession(save_session);
