@@ -80,7 +80,7 @@ Result download_file(httpcContext *context, void** buffer, size_t* size, char* u
     if(R_FAILED(ret)) return ret;
 
     u32 status_code = 0;
-    ret = httpcGetResponseStatusCode(context, &status_code, 0);
+    ret = httpcGetResponseStatusCode(context, &status_code);
     if(R_FAILED(ret)) return ret;
 
     if(status_code != 200) return -1;
